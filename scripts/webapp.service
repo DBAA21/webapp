@@ -1,0 +1,23 @@
+[Unit]
+Description=CSYE 6225 Web Application
+After=network.target mysql.service
+Requires=mysql.service
+
+[Service]
+Type=simple
+User=csye6225
+Group=csye6225
+WorkingDirectory=/opt/csye6225
+ExecStart=/usr/bin/java -jar /opt/csye6225/webapp.jar --spring.config.location=/opt/csye6225/application.properties
+Restart=on-failure
+RestartSec=10
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=webapp
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
