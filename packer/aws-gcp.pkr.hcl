@@ -102,6 +102,9 @@ source "googlecompute" "webapp" {
   machine_type            = var.gcp_machine_type
   ssh_username            = var.ssh_username
 
+  # Use default network for build (has SSH firewall rule)
+  network = "default"
+
   image_name        = "csye6225-webapp-{{timestamp}}"
   image_description = "Custom image for CSYE 6225 web application"
   image_family      = "csye6225-webapp"
