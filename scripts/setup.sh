@@ -1,102 +1,131 @@
 #!/bin/bash
 
 # ---------------------------------------------------------
-# CSYE6225 Server Setup Script
-# Purpose: Automate server configuration for application deployment
+# CSYE 6225 Application Setup Script for Custom Image
+# Purpose: Install dependencies and configure application
 # Database: MySQL
 # ---------------------------------------------------------
 
-# Enable strict error handling: exit immediately if any command fails
+# Enable strict error handling
 set -e
 
-# Define variables for easy maintenance
+# Define variables
 DB_NAME="csye6225_db"
+DB_USER="csye6225"
+DB_PASSWORD="csye6225_password"
 APP_USER="csye6225"
 APP_GROUP="csye6225"
 APP_DIR="/opt/csye6225"
+APP_JAR="webapp.jar"
 
-echo "Starting setup script..."
+echo "[INFO] Starting application setup..."
 
 # ---------------------------------------------------------
-# 1. Update system package lists
+# 1. Update system packages
 # ---------------------------------------------------------
-echo "Updating package lists..."
+echo "[INFO] Updating package lists..."
 sudo apt-get update
 
-# ---------------------------------------------------------
-# 2. Upgrade installed packages
-# ---------------------------------------------------------
-# DEBIAN_FRONTEND=noninteractive prevents interactive prompts during upgrade
-echo "Upgrading installed packages..."
+echo "[INFO] Upgrading installed packages..."
 sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
+
+# ---------------------------------------------------------
+# 2. Install Java 21 (OpenJDK)
+# ---------------------------------------------------------
+echo "[INFO] Installing Java 21..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-21-jdk
+
+# Verify Java installation
+java -version
 
 # ---------------------------------------------------------
 # 3. Install MySQL Server
 # ---------------------------------------------------------
-echo "Installing MySQL Server..."
+echo "[INFO] Installing MySQL Server..."
 sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server
 
-# Start MySQL service and enable it to start on boot
+# Start MySQL service
 sudo systemctl start mysql
 sudo systemctl enable mysql
 
 # ---------------------------------------------------------
-# 4. Configure Database (Idempotent: CREATE IF NOT EXISTS)
+# 4. Configure MySQL Database
 # ---------------------------------------------------------
-echo "Configuring database..."
-# Create database only if it doesn't already exist
+echo "[INFO] Configuring MySQL database..."
+
+# Create database
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
-echo "Database ${DB_NAME} created (if it didn't exist)."
+
+# Create database user and grant privileges
+sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
+
+echo "[INFO] Database ${DB_NAME} created with user ${DB_USER}."
 
 # ---------------------------------------------------------
 # 5. Create Application Group (Idempotent)
 # ---------------------------------------------------------
-echo "Creating application group..."
-# Check if group exists before creating
+echo "[INFO] Creating application group..."
 if ! getent group ${APP_GROUP} > /dev/null; then
     sudo groupadd ${APP_GROUP}
-    echo "Group ${APP_GROUP} created."
+    echo "[INFO] Group ${APP_GROUP} created."
 else
-    echo "Group ${APP_GROUP} already exists."
+    echo "[INFO] Group ${APP_GROUP} already exists."
 fi
 
 # ---------------------------------------------------------
-# 6. Create Application User (Idempotent)
+# 6. Create Application User (System user, no login)
 # ---------------------------------------------------------
-echo "Creating application user..."
-# Check if user exists before creating
+echo "[INFO] Creating application user..."
 if ! id -u ${APP_USER} > /dev/null 2>&1; then
-    # -r: system user, -g: primary group, -s: login shell (nologin for security)
+    # -r: system user, -g: primary group, -s: no login shell
     sudo useradd -r -g ${APP_GROUP} -s /usr/sbin/nologin ${APP_USER}
-    echo "User ${APP_USER} created."
+    echo "[INFO] User ${APP_USER} created."
 else
-    echo "User ${APP_USER} already exists."
+    echo "[INFO] User ${APP_USER} already exists."
 fi
 
 # ---------------------------------------------------------
-# 7. Setup Application Directory
+# 7. Create Application Directory
 # ---------------------------------------------------------
-echo "Setting up application directory..."
-# Create directory if it doesn't exist
+echo "[INFO] Creating application directory..."
 sudo mkdir -p ${APP_DIR}
 
-# --- IMPORTANT: Deploy your application files here ---
-# Example: sudo unzip -o webapp.zip -d ${APP_DIR}
-# Or: sudo cp -r ./app_code/* ${APP_DIR}
-# For demonstration, create a placeholder file
-sudo touch ${APP_DIR}/app-is-here.txt
+# ---------------------------------------------------------
+# 8. Copy Application JAR (Packer will provide this file)
+# ---------------------------------------------------------
+# Note: The JAR file should be present in /tmp/ when this script runs
+# Packer will copy it there before executing this script
 
-echo "Application files deployed."
+if [ -f "/tmp/${APP_JAR}" ]; then
+    echo "[INFO] Copying application JAR to ${APP_DIR}..."
+    sudo cp /tmp/${APP_JAR} ${APP_DIR}/${APP_JAR}
+else
+    echo "[WARN] Application JAR not found at /tmp/${APP_JAR}"
+    echo "[WARN] This is expected if running setup manually"
+fi
 
 # ---------------------------------------------------------
-# 8. Set File Permissions
+# 9. Create Application Configuration (application.properties)
 # ---------------------------------------------------------
-echo "Setting permissions..."
-# Change ownership to application user and group
+echo "[INFO] Creating application configuration..."
+sudo tee ${APP_DIR}/application.properties > /dev/null <<EOF
+spring.datasource.url=jdbc:mysql://localhost:3306/${DB_NAME}
+spring.datasource.username=${DB_USER}
+spring.datasource.password=${DB_PASSWORD}
+spring.jpa.hibernate.ddl-auto=update
+server.port=8080
+EOF
+
+# ---------------------------------------------------------
+# 10. Set File Permissions
+# ---------------------------------------------------------
+echo "[INFO] Setting file permissions..."
 sudo chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}
+sudo chmod -R 750 ${APP_DIR}
+sudo chmod 640 ${APP_DIR}/application.properties
 
-# Set permissions: owner(rwx), group(rx), others(rx) -> 755
-# For stricter security, use 750 (no access for others)
-sudo chmod -R 755 ${APP_DIR}
+echo "[INFO] Application setup completed successfully!"
 
 echo "Setup script completed successfully!"

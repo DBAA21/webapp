@@ -102,16 +102,16 @@ source "googlecompute" "webapp" {
   machine_type            = var.gcp_machine_type
   ssh_username            = var.ssh_username
 
-  # Use custom VPC created by Terraform (not default)
-  network    = "csye6225-vpc-dev"
-  subnetwork = "csye6225-vpc-dev-subnet-1"
+  # Network configuration
+  network    = "default"
+  subnetwork = ""
 
-  # Ensure external IP for SSH
+  # Ensure external IP is assigned for SSH access
   use_internal_ip  = false
   omit_external_ip = false
 
-  # Match firewall rule target tags
-  tags = ["webapp"]
+  # Add tags to match firewall rules
+  tags = ["allow-ssh", "packer-build"]
 
   # Image configuration
   image_name        = "csye6225-webapp-{{timestamp}}"
