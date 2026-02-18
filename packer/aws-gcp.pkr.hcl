@@ -96,7 +96,7 @@ source "amazon-ebs" "webapp" {
 # GCP Builder
 source "googlecompute" "webapp" {
   project_id              = var.gcp_project_id
-  source_image_family     = "ubuntu-2404-lts-aarch64"
+  source_image_family     = "ubuntu-2404-lts-arm64"
   source_image_project_id = ["ubuntu-os-cloud"]
   zone                    = var.gcp_zone
   machine_type            = var.gcp_machine_type
