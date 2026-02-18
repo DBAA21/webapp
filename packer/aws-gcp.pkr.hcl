@@ -102,9 +102,18 @@ source "googlecompute" "webapp" {
   machine_type            = var.gcp_machine_type
   ssh_username            = var.ssh_username
 
-  # Use default network for build (has SSH firewall rule)
-  network = "default"
+  # Network configuration
+  network    = "default"
+  subnetwork = ""
 
+  # Ensure external IP is assigned for SSH access
+  use_internal_ip  = false
+  omit_external_ip = false
+
+  # Add tags to match firewall rules
+  tags = ["allow-ssh", "packer-build"]
+
+  # Image configuration
   image_name        = "csye6225-webapp-{{timestamp}}"
   image_description = "Custom image for CSYE 6225 web application"
   image_family      = "csye6225-webapp"
