@@ -95,18 +95,16 @@ source "amazon-ebs" "webapp" {
 
 # GCP Builder
 source "googlecompute" "webapp" {
-  project_id          = var.gcp_project_id
-  source_image_family = var.gcp_source_image_family
-  zone                = var.gcp_zone
-  machine_type        = var.gcp_machine_type
-  ssh_username        = var.ssh_username
+  project_id              = var.gcp_project_id
+  source_image_family     = "ubuntu-2404-lts-aarch64"
+  source_image_project_id = ["ubuntu-os-cloud"]
+  zone                    = var.gcp_zone
+  machine_type            = var.gcp_machine_type
+  ssh_username            = var.ssh_username
 
   image_name        = "csye6225-webapp-{{timestamp}}"
   image_description = "Custom image for CSYE 6225 web application"
   image_family      = "csye6225-webapp"
-
-  # Share with demo project
-  image_project_id = var.gcp_demo_project_id
 
   disk_size = 25
   disk_type = "pd-balanced"
