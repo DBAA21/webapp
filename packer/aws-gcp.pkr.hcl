@@ -102,13 +102,16 @@ source "googlecompute" "webapp" {
   machine_type            = var.gcp_machine_type
   ssh_username            = var.ssh_username
 
-  # Build in default network (has allow-packer-ssh rule)
-  network = "default"
-  tags    = ["packer-build"]
+  # Network configuration
+  network    = "default"
+  subnetwork = ""
 
-  # SSH configuration
+  # Ensure external IP is assigned for SSH access
   use_internal_ip  = false
   omit_external_ip = false
+
+  # Add tags to match firewall rules
+  tags = ["allow-ssh", "packer-build"]
 
   # Image configuration
   image_name        = "csye6225-webapp-{{timestamp}}"
