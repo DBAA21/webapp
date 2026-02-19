@@ -90,6 +90,6 @@ public class CloudPlatformDetector {
             logger.warn("IMDSv2 token request failed: status={} body=\"{}\"", response.statusCode(), response.body());
             throw new IOException("Failed to fetch IMDSv2 token: " + response.statusCode());
         }
-        return response.body();
+        return response.body().trim();
     }
 }
