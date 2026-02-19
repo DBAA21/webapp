@@ -401,3 +401,9 @@ This project is developed for educational purposes as part of the **CSYE6225 - N
 - GitHub Actions for CI/CD platform
 
 -test A02 Demo
+## CI/CD Pipeline Status
+
+- ✅ Packer validation configured - validates template on PR
+- ✅ Image build automation configured - builds AMI and GCP images
+- ✅ Test configuration fixed with H2 database - tests run reliably in CI
+- ✅ Terraform infrastructure as code - deploy instances with custom images

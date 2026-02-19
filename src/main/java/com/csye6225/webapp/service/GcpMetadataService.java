@@ -1,105 +1,111 @@
 package com.csye6225.webapp.service;
 
-import com.csye6225.webapp.dto.MetadataResponse;
-import com.csye6225.webapp.dto.NetworkInterfaceDto;
 import com.csye6225.webapp.exception.MetadataUnavailableException;
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import com.csye6225.webapp.model.MetadataResponse;
+import com.csye6225.webapp.model.NetworkInterface;
+import org.springframework.stereotype.Service;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
-import org.springframework.stereotype.Service;
 
 @Service
 public class GcpMetadataService implements MetadataService {
-
-    private static final String GCP_BASE = "http://metadata.google.internal/computeMetadata/v1/";
-
-    private final HttpClient httpClient;
-
-    public GcpMetadataService() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(2))
-                .build();
-    }
-
+    
+    private static final String METADATA_BASE = "http://metadata.google.internal/computeMetadata/v1/instance/";
+    private static final int TIMEOUT_MS = 2000;
+    
     @Override
     public MetadataResponse getMetadata() {
         try {
-            String instanceId = getMetadataValue("instance/id");
-            String zonePath = getMetadataValue("instance/zone");
-            String machinePath = getMetadataValue("instance/machine-type");
-
-            String zone = lastSegment(zonePath);
-            String machineType = lastSegment(machinePath);
-
-            List<NetworkInterfaceDto> interfaces = fetchNetworkInterfaces();
-
-            return new MetadataResponse("gcp", instanceId, zone, machineType, interfaces);
-        } catch (IOException | InterruptedException ex) {
-            throw new MetadataUnavailableException("Metadata service unavailable - not running on supported cloud platform", ex);
+            String instanceId = fetchMetadata("id");
+            String zoneFull = fetchMetadata("zone");
+            String machineTypeFull = fetchMetadata("machine-type");
+            
+            // Parse GCP fully qualified paths
+            // zone: "projects/123456/zones/us-east1-b" -> "us-east1-b"
+            String region = extractLastSegment(zoneFull);
+            
+            // machine-type: "projects/123456/machineTypes/e2-medium" -> "e2-medium"
+            String machineType = extractLastSegment(machineTypeFull);
+            
+            // Get network interfaces
+            List<NetworkInterface> interfaces = getNetworkInterfaces();
+            
+            return new MetadataResponse("gcp", instanceId, region, machineType, interfaces);
+            
+        } catch (Exception e) {
+            throw new MetadataUnavailableException("Failed to retrieve GCP metadata", e);
         }
     }
-
-    private String getMetadataValue(String path) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(GCP_BASE + path))
-                .timeout(Duration.ofSeconds(2))
-                .header("Metadata-Flavor", "Google")
-                .GET()
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            throw new IOException("GCP metadata request failed: " + response.statusCode());
-        }
-        return response.body().trim();
-    }
-
-    private String tryMetadataValue(String path) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(GCP_BASE + path))
-                .timeout(Duration.ofSeconds(2))
-                .header("Metadata-Flavor", "Google")
-                .GET()
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            return null;
-        }
-        String body = response.body();
-        return body == null ? null : body.trim();
-    }
-
-    private List<NetworkInterfaceDto> fetchNetworkInterfaces() throws IOException, InterruptedException {
-        String interfacesRaw = getMetadataValue("instance/network-interfaces/");
-        String[] indices = interfacesRaw.split("\\n");
-
-        List<NetworkInterfaceDto> interfaces = new ArrayList<>();
-        for (String index : indices) {
-            String trimmed = index.trim();
-            if (trimmed.isEmpty()) {
-                continue;
+    
+    private List<NetworkInterface> getNetworkInterfaces() throws Exception {
+        List<NetworkInterface> interfaces = new ArrayList<>();
+        
+        // Get number of network interfaces
+        String interfacesData = fetchMetadata("network-interfaces/");
+        String[] interfaceIndices = interfacesData.trim().split("\n");
+        
+        for (String index : interfaceIndices) {
+            index = index.replace("/", "").trim();
+            if (index.isEmpty()) continue;
+            
+            String privateIp = fetchMetadata("network-interfaces/" + index + "/ip");
+            String networkFull = fetchMetadata("network-interfaces/" + index + "/network");
+            String network = extractLastSegment(networkFull);
+            
+            String publicIp = null;
+            try {
+                publicIp = fetchMetadata("network-interfaces/" + index + "/access-configs/0/external-ip");
+            } catch (Exception e) {
+                // Public IP may not exist
             }
-
-            String privateIp = tryMetadataValue("instance/network-interfaces/" + trimmed + "/ip");
-            String publicIp = tryMetadataValue("instance/network-interfaces/" + trimmed + "/access-configs/0/external-ip");
-            String networkPath = tryMetadataValue("instance/network-interfaces/" + trimmed + "/network");
-            String network = lastSegment(networkPath);
-
-            interfaces.add(new NetworkInterfaceDto(privateIp, publicIp, network));
+            
+            interfaces.add(new NetworkInterface(privateIp, publicIp, network));
         }
-
+        
         return interfaces;
     }
-
-    private String lastSegment(String value) {
-        if (value == null || value.isEmpty()) {
-            return value;
+    
+    /**
+     * Extract last segment from GCP fully qualified path
+     * Example: "projects/123/zones/us-east1-b" -> "us-east1-b"
+     */
+    private String extractLastSegment(String fullPath) {
+        if (fullPath == null || fullPath.isEmpty()) {
+            return fullPath;
         }
-        String[] parts = value.split("/");
+        String[] parts = fullPath.split("/");
         return parts[parts.length - 1];
+    }
+    
+    private String fetchMetadata(String path) throws Exception {
+        URL url = new URL(METADATA_BASE + path);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(TIMEOUT_MS);
+        conn.setReadTimeout(TIMEOUT_MS);
+        conn.setRequestProperty("Metadata-Flavor", "Google");  // Required for GCP
+        
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new Exception("Failed to fetch GCP metadata: " + path);
+        }
+        
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        
+        while ((line = reader.readLine()) != null) {
+            response.append(line).append("\n");
+        }
+        
+        reader.close();
+        conn.disconnect();
+        
+        return response.toString().trim();
     }
 }

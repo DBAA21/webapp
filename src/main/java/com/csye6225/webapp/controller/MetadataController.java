@@ -1,97 +1,117 @@
 package com.csye6225.webapp.controller;
 
-import com.csye6225.webapp.dto.MetadataResponse;
 import com.csye6225.webapp.exception.MetadataUnavailableException;
+import com.csye6225.webapp.model.MetadataResponse;
 import com.csye6225.webapp.service.AwsMetadataService;
 import com.csye6225.webapp.service.CloudPlatformDetector;
 import com.csye6225.webapp.service.GcpMetadataService;
-import jakarta.servlet.http.HttpServletRequest;
-import java.util.Map;
-import org.springframework.http.HttpHeaders;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
-import org.springframework.web.bind.annotation.GetMapping;
-import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestMapping;
-import org.springframework.web.bind.annotation.RequestMethod;
-import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.bind.annotation.*;
+import jakarta.servlet.http.HttpServletRequest;
+import java.io.BufferedReader;
+import java.util.Map;
 
 @RestController
+@RequestMapping("/v1")
 public class MetadataController {
-
-    private final CloudPlatformDetector cloudPlatformDetector;
-    private final AwsMetadataService awsMetadataService;
-    private final GcpMetadataService gcpMetadataService;
-
-    public MetadataController(
-            CloudPlatformDetector cloudPlatformDetector,
-            AwsMetadataService awsMetadataService,
-            GcpMetadataService gcpMetadataService) {
-        this.cloudPlatformDetector = cloudPlatformDetector;
-        this.awsMetadataService = awsMetadataService;
-        this.gcpMetadataService = gcpMetadataService;
-    }
-
-    @GetMapping("/v1/metadata")
+    
+    @Autowired
+    private CloudPlatformDetector platformDetector;
+    
+    @Autowired
+    private AwsMetadataService awsMetadataService;
+    
+    @Autowired
+    private GcpMetadataService gcpMetadataService;
+    
+    @GetMapping("/metadata")
     public ResponseEntity<?> getMetadata(
-            @RequestBody(required = false) String body,
-            HttpServletRequest request) {
-        if (request.getQueryString() != null && !request.getQueryString().isEmpty()) {
-            return badRequest();
+            HttpServletRequest request,
+            @RequestParam(required = false) Map<String, String> params) {
+        
+        // Validate no query parameters
+        if (params != null && !params.isEmpty()) {
+            return ResponseEntity
+                    .badRequest()
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .body(Map.of("error", "Query parameters not allowed"));
         }
-
-        if (body != null && !body.isEmpty()) {
-            return badRequest();
-        }
-
-        String platform = cloudPlatformDetector.detect();
-        if (platform == null) {
-            return serviceUnavailable();
-        }
-
+        
+        // Check for request body
         try {
-            MetadataResponse response = "aws".equals(platform)
-                    ? awsMetadataService.getMetadata()
-                    : gcpMetadataService.getMetadata();
-            return ResponseEntity.ok().headers(noCacheHeaders()).body(response);
-        } catch (MetadataUnavailableException ex) {
-            return serviceUnavailable();
+            BufferedReader reader = request.getReader();
+            String line;
+            StringBuilder bodyContent = new StringBuilder();
+            while ((line = reader.readLine()) != null) {
+                bodyContent.append(line);
+            }
+            
+            if (bodyContent.length() > 0) {
+                return ResponseEntity
+                        .badRequest()
+                        .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                        .header("Pragma", "no-cache")
+                        .body(Map.of("error", "Request body not allowed"));
+            }
+        } catch (Exception e) {
+            // Ignore errors reading body
+        }
+        
+        try {
+            // Detect cloud platform
+            String platform = platformDetector.detectPlatform();
+            
+            if (platform == null) {
+                // Not running on a supported cloud platform
+                return ResponseEntity
+                        .status(HttpStatus.SERVICE_UNAVAILABLE)
+                        .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                        .header("Pragma", "no-cache")
+                        .body(Map.of("error", "Metadata service unavailable - not running on supported cloud platform"));
+            }
+            
+            // Get metadata from appropriate service
+            MetadataResponse metadata;
+            if ("aws".equals(platform)) {
+                metadata = awsMetadataService.getMetadata();
+            } else if ("gcp".equals(platform)) {
+                metadata = gcpMetadataService.getMetadata();
+            } else {
+                throw new MetadataUnavailableException("Unknown platform: " + platform);
+            }
+            
+            return ResponseEntity
+                    .ok()
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .body(metadata);
+                    
+        } catch (MetadataUnavailableException e) {
+            return ResponseEntity
+                    .status(HttpStatus.SERVICE_UNAVAILABLE)
+                    .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                    .header("Pragma", "no-cache")
+                    .body(Map.of("error", e.getMessage()));
         }
     }
-
-    @RequestMapping(
-            value = "/v1/metadata",
-            method = {
-                    RequestMethod.POST,
-                    RequestMethod.PUT,
-                    RequestMethod.DELETE,
-                    RequestMethod.PATCH,
-                    RequestMethod.HEAD,
-                    RequestMethod.OPTIONS
-            })
-    public ResponseEntity<Map<String, String>> metadataNotAllowed() {
-        return ResponseEntity.status(HttpStatus.METHOD_NOT_ALLOWED)
-                .headers(noCacheHeaders())
-                .build();
-    }
-
-    private ResponseEntity<Map<String, String>> badRequest() {
-        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
-                .headers(noCacheHeaders())
-                .body(Map.of("error", "Bad Request"));
-    }
-
-    private ResponseEntity<Map<String, String>> serviceUnavailable() {
-        return ResponseEntity.status(HttpStatus.SERVICE_UNAVAILABLE)
-                .headers(noCacheHeaders())
-                .body(Map.of("error", "Metadata service unavailable - not running on supported cloud platform"));
-    }
-
-    private HttpHeaders noCacheHeaders() {
-        HttpHeaders headers = new HttpHeaders();
-        headers.add(HttpHeaders.CACHE_CONTROL, "no-cache, no-store, must-revalidate");
-        headers.add("Pragma", "no-cache");
-        headers.add("X-Content-Type-Options", "nosniff");
-        return headers;
+    
+    // Handle non-GET methods
+    @RequestMapping(value = "/metadata", method = {
+            RequestMethod.POST,
+            RequestMethod.PUT,
+            RequestMethod.DELETE,
+            RequestMethod.PATCH,
+            RequestMethod.HEAD,
+            RequestMethod.OPTIONS
+    })
+    public ResponseEntity<?> handleInvalidMethods() {
+        return ResponseEntity
+                .status(HttpStatus.METHOD_NOT_ALLOWED)
+                .header("Cache-Control", "no-cache, no-store, must-revalidate")
+                .header("Pragma", "no-cache")
+                .body(Map.of("error", "Method not allowed"));
     }
 }

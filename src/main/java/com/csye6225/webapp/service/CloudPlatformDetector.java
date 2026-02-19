@@ -1,88 +1,74 @@
 package com.csye6225.webapp.service;
 
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
+import java.net.HttpURLConnection;
+import java.net.URL;
 
-@Service
+@Component
 public class CloudPlatformDetector {
-
-    private static final String AWS_BASE = "http://169.254.169.254";
-    private static final String GCP_BASE = "http://metadata.google.internal/computeMetadata/v1/";
-
-    private final HttpClient httpClient;
-    private volatile String cachedPlatform;
-
-    public CloudPlatformDetector() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(2))
-                .build();
-    }
-
-    public String detect() {
-        if (cachedPlatform != null) {
-            return cachedPlatform;
+    
+    private static final String AWS_METADATA_URL = "http://169.254.169.254/latest/meta-data/";
+    private static final String GCP_METADATA_URL = "http://metadata.google.internal/computeMetadata/v1/";
+    private static final int TIMEOUT_MS = 2000; // 2 seconds
+    
+    private String detectedPlatform = null;
+    
+    /**
+     * Detect cloud platform at startup (cached for application lifetime)
+     */
+    public String detectPlatform() {
+        if (detectedPlatform != null) {
+            return detectedPlatform;
         }
-
-        if (isGcp()) {
-            cachedPlatform = "gcp";
-            return cachedPlatform;
+        
+        // Try GCP first
+        if (isGcpMetadataAvailable()) {
+            detectedPlatform = "gcp";
+            return detectedPlatform;
         }
-
-        if (isAws()) {
-            cachedPlatform = "aws";
-            return cachedPlatform;
+        
+        // Try AWS
+        if (isAwsMetadataAvailable()) {
+            detectedPlatform = "aws";
+            return detectedPlatform;
         }
-
+        
+        // No cloud platform detected
         return null;
     }
-
-    private boolean isGcp() {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(GCP_BASE + "instance/id"))
-                .timeout(Duration.ofSeconds(2))
-                .header("Metadata-Flavor", "Google")
-                .GET()
-                .build();
+    
+    private boolean isGcpMetadataAvailable() {
         try {
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
-        } catch (IOException | InterruptedException ex) {
+            URL url = new URL(GCP_METADATA_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(TIMEOUT_MS);
+            conn.setReadTimeout(TIMEOUT_MS);
+            conn.setRequestProperty("Metadata-Flavor", "Google");
+            
+            int responseCode = conn.getResponseCode();
+            conn.disconnect();
+            
+            return responseCode == 200;
+        } catch (Exception e) {
             return false;
         }
     }
-
-    private boolean isAws() {
+    
+    private boolean isAwsMetadataAvailable() {
         try {
-            String token = fetchAwsToken();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(AWS_BASE + "/latest/meta-data/instance-id"))
-                    .timeout(Duration.ofSeconds(2))
-                    .header("X-aws-ec2-metadata-token", token)
-                    .GET()
-                    .build();
-            HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-            return response.statusCode() == 200;
-        } catch (IOException | InterruptedException ex) {
+            URL url = new URL(AWS_METADATA_URL);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("GET");
+            conn.setConnectTimeout(TIMEOUT_MS);
+            conn.setReadTimeout(TIMEOUT_MS);
+            
+            int responseCode = conn.getResponseCode();
+            conn.disconnect();
+            
+            return responseCode == 200;
+        } catch (Exception e) {
             return false;
         }
-    }
-
-    private String fetchAwsToken() throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(AWS_BASE + "/latest/api/token"))
-                .timeout(Duration.ofSeconds(2))
-                .header("X-aws-ec2-metadata-token-ttl-seconds", "60")
-                .method("PUT", HttpRequest.BodyPublishers.noBody())
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            throw new IOException("Failed to fetch IMDSv2 token: " + response.statusCode());
-        }
-        return response.body();
     }
 }
