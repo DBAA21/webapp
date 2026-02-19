@@ -1,132 +1,99 @@
 package com.csye6225.webapp.service;
 
-import com.csye6225.webapp.dto.MetadataResponse;
-import com.csye6225.webapp.dto.NetworkInterfaceDto;
 import com.csye6225.webapp.exception.MetadataUnavailableException;
-import java.io.IOException;
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
-import java.time.Duration;
+import com.csye6225.webapp.model.MetadataResponse;
+import com.csye6225.webapp.model.NetworkInterface;
+import org.springframework.stereotype.Service;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.util.ArrayList;
 import java.util.List;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-import org.springframework.stereotype.Service;
 
 @Service
 public class AwsMetadataService implements MetadataService {
-
-    private static final Logger logger = LoggerFactory.getLogger(AwsMetadataService.class);
-
-    private static final String AWS_BASE = "http://169.254.169.254";
-
-    private final HttpClient httpClient;
-
-    public AwsMetadataService() {
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofSeconds(2))
-                .build();
-    }
-
+    
+    private static final String METADATA_BASE = "http://169.254.169.254/latest/meta-data/";
+    private static final int TIMEOUT_MS = 2000;
+    
     @Override
     public MetadataResponse getMetadata() {
         try {
-            String token = fetchToken();
-            String instanceId = getMetadataValue("/latest/meta-data/instance-id", token);
-            String availabilityZone = getMetadataValue("/latest/meta-data/placement/availability-zone", token);
-            String machineType = getMetadataValue("/latest/meta-data/instance-type", token);
-            String region = toRegion(availabilityZone);
-
-            List<NetworkInterfaceDto> interfaces = fetchNetworkInterfaces(token);
-
-            return new MetadataResponse("aws", instanceId, region, machineType, interfaces);
-        } catch (IOException | InterruptedException ex) {
-            logger.warn("AWS metadata fetch failed: {}", ex.getMessage());
-            throw new MetadataUnavailableException("Metadata service unavailable - not running on supported cloud platform", ex);
+            String instanceId = fetchMetadata("instance-id");
+            String availabilityZone = fetchMetadata("placement/availability-zone");
+            String instanceType = fetchMetadata("instance-type");
+            
+            // Extract region from AZ (e.g., us-east-1a -> us-east-1)
+            String region = availabilityZone.substring(0, availabilityZone.length() - 1);
+            
+            // Get network interfaces
+            List<NetworkInterface> interfaces = getNetworkInterfaces();
+            
+            return new MetadataResponse("aws", instanceId, region, instanceType, interfaces);
+            
+        } catch (Exception e) {
+            throw new MetadataUnavailableException("Failed to retrieve AWS metadata", e);
         }
     }
-
-    private String fetchToken() throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(AWS_BASE + "/latest/api/token"))
-                .timeout(Duration.ofSeconds(2))
-                .header("X-aws-ec2-metadata-token-ttl-seconds", "60")
-                .method("PUT", HttpRequest.BodyPublishers.noBody())
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            logger.warn("IMDSv2 token request failed: status={} body=\"{}\"", response.statusCode(), response.body());
-            throw new IOException("Failed to fetch IMDSv2 token: " + response.statusCode());
-        }
-        return response.body();
-    }
-
-    private String getMetadataValue(String path, String token) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(AWS_BASE + path))
-                .timeout(Duration.ofSeconds(2))
-                .header("X-aws-ec2-metadata-token", token)
-                .GET()
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            logger.warn("IMDS request failed: path={} status={} body=\"{}\"", path, response.statusCode(), response.body());
-            throw new IOException("IMDS request failed: " + response.statusCode());
-        }
-        return response.body().trim();
-    }
-
-    private String tryMetadataValue(String path, String token) throws IOException, InterruptedException {
-        HttpRequest request = HttpRequest.newBuilder()
-                .uri(URI.create(AWS_BASE + path))
-                .timeout(Duration.ofSeconds(2))
-                .header("X-aws-ec2-metadata-token", token)
-                .GET()
-                .build();
-        HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-        if (response.statusCode() != 200) {
-            return null;
-        }
-        String body = response.body();
-        return body == null ? null : body.trim();
-    }
-
-    private List<NetworkInterfaceDto> fetchNetworkInterfaces(String token) throws IOException, InterruptedException {
-        String macsRaw = getMetadataValue("/latest/meta-data/network/interfaces/macs/", token);
-        String[] macs = macsRaw.split("\\n");
-
-        List<NetworkInterfaceDto> interfaces = new ArrayList<>();
+    
+    private List<NetworkInterface> getNetworkInterfaces() throws Exception {
+        List<NetworkInterface> interfaces = new ArrayList<>();
+        
+        // Get MAC addresses
+        String macsData = fetchMetadata("network/interfaces/macs/");
+        String[] macs = macsData.trim().split("\n");
+        
         for (String mac : macs) {
-            String trimmed = mac.trim();
-            if (trimmed.isEmpty()) {
-                continue;
+            mac = mac.trim();
+            if (mac.isEmpty()) continue;
+            
+            String privateIp = fetchMetadata("network/interfaces/macs/" + mac + "local-ipv4s");
+            String publicIp = null;
+            String vpcId = null;
+            
+            try {
+                publicIp = fetchMetadata("network/interfaces/macs/" + mac + "public-ipv4s");
+            } catch (Exception e) {
+                // Public IP may not exist
             }
-            String normalizedMac = trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
-
-            String privateIp = firstLine(tryMetadataValue("/latest/meta-data/network/interfaces/macs/" + normalizedMac + "/local-ipv4s", token));
-            String publicIp = firstLine(tryMetadataValue("/latest/meta-data/network/interfaces/macs/" + normalizedMac + "/public-ipv4s", token));
-            String vpcId = tryMetadataValue("/latest/meta-data/network/interfaces/macs/" + normalizedMac + "/vpc-id", token);
-
-            interfaces.add(new NetworkInterfaceDto(privateIp, publicIp, vpcId));
+            
+            try {
+                vpcId = fetchMetadata("network/interfaces/macs/" + mac + "vpc-id");
+            } catch (Exception e) {
+                // VPC ID may not exist
+            }
+            
+            interfaces.add(new NetworkInterface(privateIp, publicIp, vpcId));
         }
-
+        
         return interfaces;
     }
-
-    private String firstLine(String value) {
-        if (value == null) {
-            return null;
+    
+    private String fetchMetadata(String path) throws Exception {
+        URL url = new URL(METADATA_BASE + path);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("GET");
+        conn.setConnectTimeout(TIMEOUT_MS);
+        conn.setReadTimeout(TIMEOUT_MS);
+        
+        int responseCode = conn.getResponseCode();
+        if (responseCode != 200) {
+            throw new Exception("Failed to fetch metadata: " + path);
         }
-        String[] lines = value.split("\\n");
-        return lines.length > 0 ? lines[0].trim() : null;
-    }
-
-    private String toRegion(String availabilityZone) {
-        if (availabilityZone == null || availabilityZone.isEmpty()) {
-            return availabilityZone;
+        
+        BufferedReader reader = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+        StringBuilder response = new StringBuilder();
+        String line;
+        
+        while ((line = reader.readLine()) != null) {
+            response.append(line).append("\n");
         }
-        return availabilityZone.substring(0, availabilityZone.length() - 1);
+        
+        reader.close();
+        conn.disconnect();
+        
+        return response.toString().trim();
     }
 }
