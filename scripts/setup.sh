@@ -11,6 +11,8 @@ set -e
 
 # Define variables for easy maintenance
 DB_NAME="csye6225_db"
+DB_USER="csye6225"
+DB_PASSWORD="csye6225_password"
 APP_USER="csye6225"
 APP_GROUP="csye6225"
 APP_DIR="/opt/csye6225"
@@ -31,6 +33,15 @@ echo "Upgrading installed packages..."
 sudo DEBIAN_FRONTEND=noninteractive apt-get upgrade -y
 
 # ---------------------------------------------------------
+# 2.5 Install Java 17 (OpenJDK)
+# ---------------------------------------------------------
+echo "Installing Java 17..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk
+
+# Verify Java installation
+java -version
+
+# ---------------------------------------------------------
 # 3. Install MySQL Server
 # ---------------------------------------------------------
 echo "Installing MySQL Server..."
@@ -47,6 +58,13 @@ echo "Configuring database..."
 # Create database only if it doesn't already exist
 sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
 echo "Database ${DB_NAME} created (if it didn't exist)."
+
+# Create database user (idempotent with DROP USER IF EXISTS)
+sudo mysql -e "DROP USER IF EXISTS '${DB_USER}'@'localhost';"
+sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
+echo "Database user ${DB_USER} configured with full access to ${DB_NAME}."
 
 # ---------------------------------------------------------
 # 5. Create Application Group (Idempotent)
@@ -80,16 +98,35 @@ echo "Setting up application directory..."
 # Create directory if it doesn't exist
 sudo mkdir -p ${APP_DIR}
 
-# --- IMPORTANT: Deploy your application files here ---
-# Example: sudo unzip -o webapp.zip -d ${APP_DIR}
-# Or: sudo cp -r ./app_code/* ${APP_DIR}
-# For demonstration, create a placeholder file
-sudo touch ${APP_DIR}/app-is-here.txt
-
-echo "Application files deployed."
+# Copy application JAR from /tmp (placed there by packer provisioner)
+if [ -f "/tmp/webapp.jar" ]; then
+    echo "Copying application JAR to ${APP_DIR}..."
+    sudo cp /tmp/webapp.jar ${APP_DIR}/webapp.jar
+    echo "Application JAR deployed."
+else
+    echo "ERROR: Application JAR not found at /tmp/webapp.jar"
+    echo "This file should be provisioned by packer before running this script"
+    exit 1
+fi
 
 # ---------------------------------------------------------
-# 8. Set File Permissions
+# 8. Create Application Configuration
+# ---------------------------------------------------------
+echo "Creating application configuration..."
+sudo tee ${APP_DIR}/application.properties > /dev/null <<EOF
+spring.datasource.url=jdbc:mysql://localhost:3306/${DB_NAME}
+spring.datasource.username=${DB_USER}
+spring.datasource.password=${DB_PASSWORD}
+spring.jpa.hibernate.ddl-auto=update
+spring.jpa.database-platform=org.hibernate.dialect.MySQL8Dialect
+spring.application.name=csye6225-webapp
+server.port=8080
+server.servlet.context-path=/
+EOF
+echo "Application configuration created."
+
+# ---------------------------------------------------------
+# 9. Set File Permissions
 # ---------------------------------------------------------
 echo "Setting permissions..."
 # Change ownership to application user and group
