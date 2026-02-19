@@ -11,10 +11,14 @@ import java.net.http.HttpResponse;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class AwsMetadataService implements MetadataService {
+
+    private static final Logger logger = LoggerFactory.getLogger(AwsMetadataService.class);
 
     private static final String AWS_BASE = "http://169.254.169.254";
 
@@ -39,6 +43,7 @@ public class AwsMetadataService implements MetadataService {
 
             return new MetadataResponse("aws", instanceId, region, machineType, interfaces);
         } catch (IOException | InterruptedException ex) {
+            logger.warn("AWS metadata fetch failed: {}", ex.getMessage());
             throw new MetadataUnavailableException("Metadata service unavailable - not running on supported cloud platform", ex);
         }
     }
@@ -52,6 +57,7 @@ public class AwsMetadataService implements MetadataService {
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
+            logger.warn("IMDSv2 token request failed: status={} body=\"{}\"", response.statusCode(), response.body());
             throw new IOException("Failed to fetch IMDSv2 token: " + response.statusCode());
         }
         return response.body();
@@ -66,6 +72,7 @@ public class AwsMetadataService implements MetadataService {
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
+            logger.warn("IMDS request failed: path={} status={} body=\"{}\"", path, response.statusCode(), response.body());
             throw new IOException("IMDS request failed: " + response.statusCode());
         }
         return response.body().trim();

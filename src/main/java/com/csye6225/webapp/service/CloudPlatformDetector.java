@@ -6,10 +6,14 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.time.Duration;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 @Service
 public class CloudPlatformDetector {
+
+    private static final Logger logger = LoggerFactory.getLogger(CloudPlatformDetector.class);
 
     private static final String AWS_BASE = "http://169.254.169.254";
     private static final String GCP_BASE = "http://metadata.google.internal/computeMetadata/v1/";
@@ -52,6 +56,7 @@ public class CloudPlatformDetector {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() == 200;
         } catch (IOException | InterruptedException ex) {
+            logger.debug("GCP metadata probe failed: {}", ex.getMessage());
             return false;
         }
     }
@@ -68,6 +73,7 @@ public class CloudPlatformDetector {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
             return response.statusCode() == 200;
         } catch (IOException | InterruptedException ex) {
+            logger.debug("AWS metadata probe failed: {}", ex.getMessage());
             return false;
         }
     }
@@ -81,6 +87,7 @@ public class CloudPlatformDetector {
                 .build();
         HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
         if (response.statusCode() != 200) {
+            logger.warn("IMDSv2 token request failed: status={} body=\"{}\"", response.statusCode(), response.body());
             throw new IOException("Failed to fetch IMDSv2 token: " + response.statusCode());
         }
         return response.body();
