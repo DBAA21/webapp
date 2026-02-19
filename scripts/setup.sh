@@ -39,6 +39,15 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-21-jdk
 java -version
 
 # ---------------------------------------------------------
+# 2.5 Install Java 17 (OpenJDK)
+# ---------------------------------------------------------
+echo "Installing Java 17..."
+sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk
+
+# Verify Java installation
+java -version
+
+# ---------------------------------------------------------
 # 3. Install MySQL Server
 # ---------------------------------------------------------
 echo "[INFO] Installing MySQL Server..."
@@ -62,6 +71,13 @@ sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';
 sudo mysql -e "FLUSH PRIVILEGES;"
 
 echo "[INFO] Database ${DB_NAME} created with user ${DB_USER}."
+
+# Create database user (idempotent with DROP USER IF EXISTS)
+sudo mysql -e "DROP USER IF EXISTS '${DB_USER}'@'localhost';"
+sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
+sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
+sudo mysql -e "FLUSH PRIVILEGES;"
+echo "Database user ${DB_USER} configured with full access to ${DB_NAME}."
 
 # ---------------------------------------------------------
 # 5. Create Application Group (Idempotent)
