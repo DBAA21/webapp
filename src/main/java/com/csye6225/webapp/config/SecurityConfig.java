@@ -70,6 +70,7 @@ public class SecurityConfig {
                 .requestMatchers(HttpMethod.POST, "/v1/user").permitAll()
                 .requestMatchers("/v1/metadata").permitAll()
                 .requestMatchers("/v1/user/self").authenticated()
+                .requestMatchers("/v1/courses/**").authenticated()
                 .anyRequest().authenticated()
             )
             // 3. Explicitly bind our manually built manager to httpBasic

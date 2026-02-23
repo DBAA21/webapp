@@ -3,16 +3,13 @@
 # ---------------------------------------------------------
 # CSYE 6225 Application Setup Script for Custom Image
 # Purpose: Install dependencies and configure application
-# Database: MySQL
+# Database: RDS (configured via environment variables)
 # ---------------------------------------------------------
 
 # Enable strict error handling
 set -e
 
 # Define variables
-DB_NAME="csye6225_db"
-DB_USER="csye6225"
-DB_PASSWORD="csye6225_password"
 APP_USER="csye6225"
 APP_GROUP="csye6225"
 APP_DIR="/opt/csye6225"
@@ -46,38 +43,6 @@ sudo DEBIAN_FRONTEND=noninteractive apt-get install -y openjdk-17-jdk
 
 # Verify Java installation
 java -version
-
-# ---------------------------------------------------------
-# 3. Install MySQL Server
-# ---------------------------------------------------------
-echo "[INFO] Installing MySQL Server..."
-sudo DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server
-
-# Start MySQL service
-sudo systemctl start mysql
-sudo systemctl enable mysql
-
-# ---------------------------------------------------------
-# 4. Configure MySQL Database
-# ---------------------------------------------------------
-echo "[INFO] Configuring MySQL database..."
-
-# Create database
-sudo mysql -e "CREATE DATABASE IF NOT EXISTS ${DB_NAME};"
-
-# Create database user and grant privileges
-sudo mysql -e "CREATE USER IF NOT EXISTS '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
-
-echo "[INFO] Database ${DB_NAME} created with user ${DB_USER}."
-
-# Create database user (idempotent with DROP USER IF EXISTS)
-sudo mysql -e "DROP USER IF EXISTS '${DB_USER}'@'localhost';"
-sudo mysql -e "CREATE USER '${DB_USER}'@'localhost' IDENTIFIED BY '${DB_PASSWORD}';"
-sudo mysql -e "GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_USER}'@'localhost';"
-sudo mysql -e "FLUSH PRIVILEGES;"
-echo "Database user ${DB_USER} configured with full access to ${DB_NAME}."
 
 # ---------------------------------------------------------
 # 5. Create Application Group (Idempotent)
@@ -123,24 +88,11 @@ else
 fi
 
 # ---------------------------------------------------------
-# 9. Create Application Configuration (application.properties)
-# ---------------------------------------------------------
-echo "[INFO] Creating application configuration..."
-sudo tee ${APP_DIR}/application.properties > /dev/null <<EOF
-spring.datasource.url=jdbc:mysql://localhost:3306/${DB_NAME}
-spring.datasource.username=${DB_USER}
-spring.datasource.password=${DB_PASSWORD}
-spring.jpa.hibernate.ddl-auto=update
-server.port=8080
-EOF
-
-# ---------------------------------------------------------
-# 10. Set File Permissions
+# 9. Set File Permissions
 # ---------------------------------------------------------
 echo "[INFO] Setting file permissions..."
 sudo chown -R ${APP_USER}:${APP_GROUP} ${APP_DIR}
 sudo chmod -R 750 ${APP_DIR}
-sudo chmod 640 ${APP_DIR}/application.properties
 
 echo "[INFO] Application setup completed successfully!"
 
